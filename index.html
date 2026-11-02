@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Учёт занятий</title>
+<style>
+:root{
+  --bg:#f6f5f2;--surface:#fff;--text:#1d1d1f;--muted:#6b6b72;--border:#e3e1dc;
+  --accent:#7c3aed;--accent-soft:#efe8fd;--danger:#c2410c;--danger-soft:#fdeee6;--ok:#15803d;
+}
+@media(prefers-color-scheme:dark){
+  :root{--bg:#141417;--surface:#1e1e23;--text:#f0f0f3;--muted:#9a9aa5;--border:#2e2e36;
+  --accent:#a78bfa;--accent-soft:#2a2340;--danger:#fb923c;--danger-soft:#3a2418;--ok:#4ade80}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:8px 0 16px}
+.nav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px}
+.nav h2{margin:0;font-size:18px;text-transform:capitalize}
+button{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 12px;cursor:pointer}
+button:hover{border-color:var(--accent)}
+.summary{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px}
+.total{font-size:32px;font-weight:700;color:var(--accent)}
+.stats{display:flex;flex-wrap:wrap;gap:6px 16px;color:var(--muted);font-size:14px;margin-top:4px}
+.row{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:10px;display:grid;grid-template-columns:1fr auto;gap:8px 12px;align-items:center}
+.row.cancelled{background:var(--danger-soft)}
+.date{font-weight:600}
+.date small{color:var(--muted);font-weight:400;margin-left:6px}
+.price{font-weight:700;text-align:right}
+.row.cancelled .price{color:var(--danger)}
+.controls{grid-column:1/-1;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.stepper{display:flex;align-items:center;gap:6px}
+.stepper button{width:40px;height:40px;padding:0;font-size:20px}
+.stepper input{width:56px;height:40px;text-align:center;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+.cancel{margin-left:auto}
+.cancel.on{background:var(--danger);color:#fff;border-color:var(--danger)}
+.today{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.hint{color:var(--muted);font-size:13px;margin:16px 0}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:6px}
+td{padding:2px 0}td:last-child{text-align:right}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.warn{color:var(--danger);font-size:13px;grid-column:1/-1}
+</style>
+</head>
+<body>
+<main>
+  <h1>Учёт занятий · пн и ср</h1>
+  <div class="nav">
+    <button id="prev" aria-label="Предыдущий месяц">←</button>
+    <h2 id="month"></h2>
+    <button id="next" aria-label="Следующий месяц">→</button>
+  </div>
+  <section class="summary">
+    <div class="total" id="total"></div>
+    <div class="stats" id="stats"></div>
+  </section>
+  <section id="list"></section>
+  <section class="hint">
+    <strong>Расценки</strong>
+    <table id="rates"></table>
+    <div class="tools">
+      <button id="export">Сохранить копию данных</button>
+      <button id="import">Загрузить копию</button>
+      <input type="file" id="file" accept="application/json" hidden>
+    </div>
+    <p>Данные хранятся в этом браузере. Чтобы перенести на другое устройство, сохрани копию и загрузи её там.</p>
+  </section>
+</main>
+<script>
+const RATES=[{min:1,max:3,price:1500},{min:4,max:5,price:2000},{min:6,max:9,price:2500},{min:10,max:12,price:3000}];
+const MAX=12, KEY="dance-attendance-v1";
+const MONTHS=["январь","февраль","март","апрель","май","июнь","июль","август","сентябрь","октябрь","ноябрь","декабрь"];
+const DAYS={1:"пн",3:"ср"};
+const fmt=n=>n.toLocaleString("ru-RU")+" ₽";
+const pad=n=>String(n).padStart(2,"0");
+const key=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+function priceFor(n){const r=RATES.find(r=>n>=r.min&&n<=r.max);return r?r.price:0}
+function lessonsOf(y,m){const out=[];const d=new Date(y,m,1);while(d.getMonth()===m){if(DAYS[d.getDay()])out.push(new Date(d));d.setDate(d.getDate()+1)}return out}
+function lessonSum(rec){return rec&&!rec.cancelled&&rec.count>0?priceFor(rec.count):0}
+
+if(typeof document==="undefined"){module.exports={priceFor,lessonsOf,lessonSum,MAX}}
+else{
+let data={};try{data=JSON.parse(localStorage.getItem(KEY))||{}}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(data))}catch(e){}};
+const now=new Date();let y=now.getFullYear(),m=now.getMonth();
+const $=id=>document.getElementById(id);
+
+$("rates").innerHTML=RATES.map(r=>`<tr><td>${r.min===r.max?r.min:r.min+"–"+r.max} чел.</td><td>${fmt(r.price)}</td></tr>`).join("");
+
+function setRec(k,patch){data[k]=Object.assign({},data[k],patch);save();render()}
+
+function render(){
+  $("month").textContent=`${MONTHS[m]} ${y}`;
+  const lessons=lessonsOf(y,m);
+  let total=0,held=0,canc=0,people=0,pending=0;
+  const todayKey=key(now);
+  $("list").innerHTML="";
+  for(const d of lessons){
+    const k=key(d),rec=data[k]||{},sum=lessonSum(rec);
+    total+=sum;
+    if(rec.cancelled)canc++;else if(rec.count>0){held++;people+=rec.count}else pending++;
+    const row=document.createElement("div");
+    row.className="row"+(rec.cancelled?" cancelled":"")+(k===todayKey?" today":"");
+    const cnt=rec.count||0;
+    row.innerHTML=`
+      <div class="date">${pad(d.getDate())}.${pad(d.getMonth()+1)}<small>${DAYS[d.getDay()]}</small></div>
+      <div class="price">${rec.cancelled?"отменено":(cnt>0?fmt(sum):"—")}</div>
+      <div class="controls">
+        <div class="stepper">
+          <button data-a="dec" ${rec.cancelled?"disabled":""} aria-label="Минус">−</button>
+          <input type="number" inputmode="numeric" min="0" max="${MAX}" value="${cnt||""}" placeholder="0" ${rec.cancelled?"disabled":""} aria-label="Сколько человек">
+          <button data-a="inc" ${rec.cancelled?"disabled":""} aria-label="Плюс">+</button>
+          <span style="color:var(--muted)">чел.</span>
+        </div>
+        <button class="cancel ${rec.cancelled?"on":""}" data-a="cancel">${rec.cancelled?"Отменено":"Отменить"}</button>
+      </div>`;
+    const input=row.querySelector("input");
+    row.querySelector('[data-a="dec"]').onclick=()=>setRec(k,{count:Math.max(0,cnt-1)});
+    row.querySelector('[data-a="inc"]').onclick=()=>setRec(k,{count:Math.min(MAX,cnt+1)});
+    row.querySelector('[data-a="cancel"]').onclick=()=>setRec(k,{cancelled:!rec.cancelled});
+    input.onchange=()=>{let v=parseInt(input.value,10);if(isNaN(v)||v<0)v=0;setRec(k,{count:Math.min(MAX,v)})};
+    $("list").appendChild(row);
+  }
+  $("total").textContent=fmt(total);
+  $("stats").innerHTML=`<span>Проведено: ${held}</span><span>Отменено: ${canc}</span><span>Не отмечено: ${pending}</span><span>Человек всего: ${people}</span>`;
+}
+$("prev").onclick=()=>{m--;if(m<0){m=11;y--}render()};
+$("next").onclick=()=>{m++;if(m>11){m=0;y++}render()};
+$("export").onclick=()=>{
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
+  a.download="dance-attendance.json";a.click();
+};
+$("import").onclick=()=>$("file").click();
+$("file").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  f.text().then(t=>{try{const o=JSON.parse(t);if(o&&typeof o==="object"){data=o;save();render()}}catch(err){alert("Не удалось прочитать файл")}});
+};
+render();
+}
+</script>
+</body>
+</html>
